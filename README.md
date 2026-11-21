@@ -1,6 +1,6 @@
 # Nile Byte Policy Assistant
 
-![CI](https://github.com/<your-username>/<your-repo>/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/Mohamed-Agwa/policyRAG/actions/workflows/ci.yml/badge.svg)
 
 A Retrieval-Augmented Generation (RAG) app that answers employee questions about the
 company policies of **Nile Byte Technologies** (a fictional 300-person software company in
@@ -32,8 +32,8 @@ See [design-and-evaluation.md](design-and-evaluation.md) for design decisions an
 ## 2. Set up (once)
 
 ```bash
-git clone https://github.com/<your-username>/<your-repo>.git
-cd <your-repo>
+git clone https://github.com/Mohamed-Agwa/policyRAG.git
+cd policyRAG
 
 # Create and activate a virtual environment
 python3.11 -m venv .venv
