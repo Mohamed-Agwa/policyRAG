@@ -28,15 +28,33 @@ from rag.guardrails import InvalidQuestion
 from rag.ingest import load_documents_cached
 from rag.pipeline import IndexNotReady, LLMNotConfigured, PolicyRAG, index_size
 
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"),
+                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("policy_rag")
 APP_VERSION = "1.0.0"
+
+
+def llm_error(exc: Exception, settings) -> tuple[int, str]:
+    """Map LLM/API exceptions to an HTTP status and a message the user can act on."""
+    name = type(exc).__name__
+    code = getattr(exc, "status_code", None)
+    if code == 429 or "RateLimit" in name:
+        return 429, "The AI service's free rate limit was reached. Please wait about a minute and try again."
+    if code == 404 or "NotFound" in name:
+        return 502, (f"The language model '{settings.llm_model}' is not available on the provider. "
+                     "Set LLM_MODEL to a current model.")
+    if code in (401, 403) or "Authentication" in name or "PermissionDenied" in name:
+        return 502, "The AI service rejected the API key. Check GROQ_API_KEY."
+    if "Timeout" in name:
+        return 504, "The AI service took too long to respond. Please try again."
+    return 502, "The language model request failed. Please try again shortly."
 
 
 def create_app(pipeline: PolicyRAG | None = None, settings=None) -> Flask:
     app = Flask(__name__)
     app.config["JSON_SORT_KEYS"] = False
     settings = settings or (pipeline.settings if pipeline else get_settings())
-    state = {"pipeline": pipeline}
+    state = {"pipeline": pipeline, "warmup": "not started" if pipeline is None else "n/a"}
     lock = Lock()
 
     def get_pipeline() -> PolicyRAG:
@@ -49,11 +67,15 @@ def create_app(pipeline: PolicyRAG | None = None, settings=None) -> Flask:
     def warm_up() -> None:
         """Load the index and models in the background so the first user
         request is fast (useful on Render after a cold start)."""
+        state["warmup"] = "loading"
+        log.info("Warm-up: loading index and models")
         try:
             p = get_pipeline()
             p.retrieve("annual leave carryover")
+            state["warmup"] = "done"
             log.info("Warm-up complete")
-        except Exception:  # pragma: no cover
+        except Exception as exc:  # pragma: no cover
+            state["warmup"] = f"failed: {exc}"
             log.exception("Warm-up failed")
 
     if pipeline is None and os.getenv("WARMUP_ON_START", "false").lower() == "true":
@@ -69,26 +91,32 @@ def create_app(pipeline: PolicyRAG | None = None, settings=None) -> Flask:
         payload = request.get_json(silent=True) or {}
         question = payload.get("question")
         use_cache = not bool(payload.get("no_cache", False))
+        log.info("/chat received (%d chars)", len(question) if isinstance(question, str) else 0)
         try:
             result = get_pipeline().answer(question, use_cache=use_cache)
         except InvalidQuestion as exc:
             return jsonify(error=str(exc)), 400
         except (IndexNotReady, LLMNotConfigured) as exc:
+            log.error("chat unavailable: %s", exc)
             return jsonify(error=str(exc)), 503
-        except Exception:  # pragma: no cover - surfaced to the client as a 502
-            log.exception("chat failed")
-            return jsonify(error="The language model request failed. Please try again shortly."), 502
+        except Exception as exc:  # LLM/API problems, surfaced with a useful message
+            status, message = llm_error(exc, settings)
+            log.exception("chat failed (%s)", status)
+            return jsonify(error=message), status
         result.pop("context", None)
         result["latency_ms"] = round((time.perf_counter() - t0) * 1000, 1)
         return jsonify(result)
 
     @app.get("/health")
     def health():
-        chunks = index_size(settings)
+        p = state["pipeline"]
+        chunks = p.vectorstore._collection.count() if p is not None else index_size(settings)
         ok = bool(chunks) and settings.llm_configured
         return jsonify(
             status="ok" if ok else "degraded",
             version=APP_VERSION,
+            pipeline_loaded=p is not None,
+            warmup=state["warmup"],
             index_chunks=chunks,
             llm_configured=settings.llm_configured,
             model=settings.llm_model,

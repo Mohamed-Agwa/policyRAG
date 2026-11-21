@@ -26,7 +26,7 @@ def make_chat_llm(settings, model: str | None = None, max_tokens: int | None = N
         temperature=0,
         max_tokens=max_tokens or settings.max_tokens,
         max_retries=settings.llm_max_retries,
-        timeout=60,
+        timeout=settings.llm_timeout,
         use_responses_api=False,  # Groq: plain Chat Completions endpoint
         **extra,
     )

@@ -47,12 +47,16 @@ class Settings:
     max_tokens: int = field(default_factory=lambda: int(os.getenv("MAX_TOKENS", "1024")))
     max_answer_words: int = field(default_factory=lambda: int(os.getenv("MAX_ANSWER_WORDS", "180")))
     llm_max_retries: int = field(default_factory=lambda: int(os.getenv("LLM_MAX_RETRIES", "6")))
+    llm_timeout: float = field(default_factory=lambda: float(os.getenv("LLM_TIMEOUT", "45")))
 
     # Embeddings + re-ranking (FastEmbed / ONNX)
     embed_model: str = field(default_factory=lambda: os.getenv("EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2"))
     rerank_model: str = field(default_factory=lambda: os.getenv("RERANK_MODEL", "Xenova/ms-marco-MiniLM-L-6-v2"))
     use_reranker: bool = field(default_factory=lambda: _bool("USE_RERANKER", True))
     model_cache_dir: Path = field(default_factory=lambda: _path("MODEL_CACHE_DIR", ".models"))
+    # ONNX Runtime threads per model. 0 = library default (all cores). Use 1 on
+    # small hosts such as Render's free instance to cut memory and CPU contention.
+    onnx_threads: int = field(default_factory=lambda: int(os.getenv("ONNX_THREADS", "0")))
 
     # Chunking + retrieval
     chunk_size: int = field(default_factory=lambda: int(os.getenv("CHUNK_SIZE", "800")))

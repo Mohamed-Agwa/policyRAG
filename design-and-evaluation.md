@@ -65,7 +65,7 @@ unit-tested and switched off for ablations.
 | LLM | Groq `openai/gpt-oss-120b`, temperature 0, low reasoning effort, through LangChain `ChatOpenAI` (Groq is OpenAI-compatible) | Free, fast inference, strong instruction following; a production model on Groq. Temperature 0 makes answers repeatable. `llama-3.3-70b-versatile` was planned first, but Groq shut it down for free-tier use on 16 Aug 2026 | `llama-3.3-70b-versatile` (shut down); OpenRouter free models (50 requests/day cap) |
 | Caching | SQLite cache keyed on model, prompt variant, question and retrieved context | Keeps repeat questions and evaluation re-runs within Groq's free limits | No cache |
 | Web app | Flask, with server-rendered HTML and vanilla JS | The rubric needs custom REST endpoints (`/chat`, `/health`), which Streamlit can't serve | Streamlit, FastAPI |
-| Deployment | Render free web service from `render.yaml`. The build step creates the index and downloads the models; gunicorn runs 1 worker with 4 threads | Free, deploys from Git, health check on `/health` | Railway |
+| Deployment | Render free web service from `render.yaml`. The build step creates the index and downloads the embedding model; gunicorn runs 1 worker with 2 threads. The deployed app runs **without the re-ranker** and with single-threaded ONNX Runtime | Free, deploys from Git, health check on `/health`. Both ONNX models plus Chroma exceeded the free instance's 512 MB: Render silently restarted the instance every 1–2 minutes, which showed up as intermittent 502s. The `no_rerank` ablation measures what this trade-off costs | Railway; a paid instance (keeps the re-ranker) |
 
 ## 4. Guardrails
 

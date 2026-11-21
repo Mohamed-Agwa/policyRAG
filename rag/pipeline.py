@@ -8,6 +8,7 @@ is testable and can be switched off for ablations.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,7 @@ from .guardrails import postprocess, validate_question
 from .prompts import REFUSAL, build_prompt, format_context
 
 SNIPPET_CHARS = 280
+log = logging.getLogger("policy_rag")
 
 
 class IndexNotReady(RuntimeError):
@@ -58,15 +60,26 @@ def open_vectorstore(settings: Settings, embeddings=None):
     )
 
 
+_INDEX_SIZE: dict[str, int] = {}
+
+
 def index_size(settings: Settings) -> int | None:
-    """Number of indexed chunks, without loading any model (used by /health)."""
+    """Number of indexed chunks, without loading any model (used by /health).
+
+    Cached per index directory: Render calls /health every few seconds, and the
+    index only changes on redeploy.
+    """
+    key = str(settings.chroma_dir)
+    if key in _INDEX_SIZE:
+        return _INDEX_SIZE[key]
     if not Path(settings.chroma_dir).exists():
         return None
     try:
         import chromadb
 
-        client = chromadb.PersistentClient(path=str(settings.chroma_dir))
-        return client.get_collection(settings.collection).count()
+        client = chromadb.PersistentClient(path=key)
+        _INDEX_SIZE[key] = client.get_collection(settings.collection).count()
+        return _INDEX_SIZE[key]
     except Exception:
         return None
 
@@ -95,9 +108,20 @@ class PolicyRAG:
         from .rerank import get_reranker
 
         settings = settings or get_settings()
+        t0 = time.perf_counter()
         cache = SQLiteCache(settings.cache_path) if settings.use_cache else None
-        return cls(settings, open_vectorstore(settings), make_chat_llm(settings),
-                   reranker=get_reranker(settings), cache=cache)
+        store = open_vectorstore(settings)
+        log.info("Index opened in %.1fs (%s)", time.perf_counter() - t0, settings.chroma_dir)
+        t1 = time.perf_counter()
+        store.embeddings.embed_query("load model")  # load the ONNX model now, not mid-request
+        log.info("Embedding model %s loaded in %.1fs", settings.embed_model, time.perf_counter() - t1)
+        reranker = get_reranker(settings)
+        if reranker:
+            t2 = time.perf_counter()
+            reranker.score("load model", ["load model"])
+            log.info("Re-ranker %s loaded in %.1fs", settings.rerank_model, time.perf_counter() - t2)
+        log.info("Pipeline ready: llm=%s reranker=%s", settings.llm_model, bool(reranker))
+        return cls(settings, store, make_chat_llm(settings), reranker=reranker, cache=cache)
 
     # ------------------------------------------------------------------ retrieval
     def retrieve(self, question: str) -> tuple[list[RetrievedChunk], float]:
@@ -132,6 +156,7 @@ class PolicyRAG:
         t0 = time.perf_counter()
         question = validate_question(question)
         chunks, best = self.retrieve(question)
+        t_retrieval = (time.perf_counter() - t0) * 1000
         retrieved = [{
             "doc_id": c.doc_id,
             "section": c.doc.metadata["section"],
@@ -143,12 +168,18 @@ class PolicyRAG:
 
         # Guardrail 1: out-of-corpus questions are refused before any LLM call.
         if not chunks or best < self.settings.min_relevance:
+            log.info("Refused (best score %.3f < %.2f) after %.0f ms retrieval",
+                     best, self.settings.min_relevance, t_retrieval)
             return {**base, "answer": REFUSAL, "refused": True, "refusal_reason": "low_relevance",
+                    "timings_ms": {"retrieval": round(t_retrieval, 1), "llm": 0.0},
                     "citations": [], "citation_inferred": False, "cached": False, "llm_called": False,
                     "latency_ms": round((time.perf_counter() - t0) * 1000, 1)}
 
         context = format_context(chunks)
+        t1 = time.perf_counter()
         raw, cached = self._generate(question, context, use_cache)
+        t_llm = (time.perf_counter() - t1) * 1000
+        log.info("Answered: retrieval %.0f ms, llm %.0f ms%s", t_retrieval, t_llm, " (cached)" if cached else "")
 
         # Guardrails 2-4: model refusal, citation validation, length cap.
         guarded = postprocess(raw, [c.doc_id for c in chunks], self.settings.max_answer_words)
@@ -168,4 +199,5 @@ class PolicyRAG:
                 "citations": citations, "citation_inferred": guarded.citation_inferred,
                 "truncated": guarded.truncated, "cached": cached, "llm_called": not cached,
                 "context": context,
+                "timings_ms": {"retrieval": round(t_retrieval, 1), "llm": round(t_llm, 1)},
                 "latency_ms": round((time.perf_counter() - t0) * 1000, 1)}

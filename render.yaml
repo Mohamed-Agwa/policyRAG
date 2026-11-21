@@ -10,7 +10,7 @@ services:
     # nothing is downloaded at request time.
     buildCommand: pip install -r requirements.txt && python -m rag.ingest
     # One worker keeps memory low; threads handle concurrent requests.
-    startCommand: gunicorn app:app --workers 1 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT
+    startCommand: gunicorn app:app --workers 1 --threads 2 --timeout 300 --bind 0.0.0.0:$PORT
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
@@ -19,7 +19,19 @@ services:
         sync: false        # set the value in the Render dashboard
       - key: LLM_MODEL
         value: openai/gpt-oss-120b
-      - key: WARMUP_ON_START
-        value: "true"
+      # Memory: the free instance has 512 MB. Two ONNX models + Chroma exceed it
+      # and Render silently restarts the instance (seen as intermittent 502s).
+      # So the deployed app runs without the re-ranker (its effect is measured
+      # in the "no_rerank" ablation) and with single-threaded ONNX Runtime.
       - key: USE_RERANKER
-        value: "true"      # set to "false" if the instance runs out of memory
+        value: "false"
+      - key: ONNX_THREADS
+        value: "1"
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: LLM_MAX_RETRIES
+        value: "2"
+      - key: LLM_TIMEOUT
+        value: "45"
+      - key: WARMUP_ON_START
+        value: "true"      # load the index + embedding model at boot for a fast first answer

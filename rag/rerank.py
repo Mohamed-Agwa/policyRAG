@@ -14,9 +14,10 @@ from typing import Sequence
 
 
 class CrossEncoderReranker:
-    def __init__(self, model_name: str, cache_dir: Path | str | None = None):
+    def __init__(self, model_name: str, cache_dir: Path | str | None = None, threads: int | None = None):
         self.model_name = model_name
         self.cache_dir = str(cache_dir) if cache_dir else None
+        self.threads = threads or None
         self._model = None
         self._lock = Lock()
 
@@ -27,7 +28,8 @@ class CrossEncoderReranker:
                 if self._model is None:
                     from fastembed.rerank.cross_encoder import TextCrossEncoder
 
-                    self._model = TextCrossEncoder(model_name=self.model_name, cache_dir=self.cache_dir)
+                    self._model = TextCrossEncoder(model_name=self.model_name, cache_dir=self.cache_dir,
+                                                    threads=self.threads)
         return self._model
 
     def score(self, query: str, texts: Sequence[str]) -> list[float]:
@@ -37,4 +39,5 @@ class CrossEncoderReranker:
 def get_reranker(settings) -> CrossEncoderReranker | None:
     if not settings.use_reranker:
         return None
-    return CrossEncoderReranker(settings.rerank_model, cache_dir=settings.model_cache_dir)
+    return CrossEncoderReranker(settings.rerank_model, cache_dir=settings.model_cache_dir,
+                                threads=settings.onnx_threads)

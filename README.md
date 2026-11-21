@@ -1,6 +1,6 @@
 # Nile Byte Policy Assistant
 
-![CI](https://github.com/Mohamed-Agwa/policyRAG/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/<your-username>/<your-repo>/actions/workflows/ci.yml/badge.svg)
 
 A Retrieval-Augmented Generation (RAG) app that answers employee questions about the
 company policies of **Nile Byte Technologies** (a fictional 300-person software company in
@@ -32,8 +32,8 @@ See [design-and-evaluation.md](design-and-evaluation.md) for design decisions an
 ## 2. Set up (once)
 
 ```bash
-git clone https://github.com/Mohamed-Agwa/policyRAG.git
-cd policyRAG
+git clone https://github.com/<your-username>/<your-repo>.git
+cd <your-repo>
 
 # Create and activate a virtual environment
 python3.11 -m venv .venv
@@ -69,10 +69,10 @@ chunks (800 characters, 100 overlap), embeds them, stores them in `chroma_db/`, 
 the models into `.models/`. Expected output:
 
 ```
-Corpus: 12 documents (html, md, pdf), 15,280 words (~51 pages), 216 chunks at chunk_size=800, overlap=100
+Corpus: 12 documents (html, md, pdf), 15,286 words (~51 pages), 226 chunks at chunk_size=800, overlap=100
   POL-FIN-001  md     1300 words  Travel and Expense Reimbursement Policy
   ...
-Indexed 216 chunks from 12 documents into .../chroma_db
+Indexed 226 chunks from 12 documents into .../chroma_db
 ```
 
 Re-run this command whenever you change a policy file or `CHUNK_SIZE` / `CHUNK_OVERLAP`.
@@ -127,7 +127,7 @@ Example response (shortened):
 `curl http://127.0.0.1:5000/health` returns, for example:
 
 ```json
-{"status": "ok", "index_chunks": 216, "llm_configured": true, "model": "openai/gpt-oss-120b", ...}
+{"status": "ok", "index_chunks": 226, "llm_configured": true, "model": "openai/gpt-oss-120b", ...}
 ```
 
 ## 5. Run the tests
@@ -188,7 +188,9 @@ tests pass on `main`.
 **Free-tier notes.**
 - The service sleeps after 15 idle minutes, and waking takes about a minute. Open the URL a
   minute before demoing.
-- If the instance runs out of memory, set `USE_RERANKER=false` in the Render environment.
+- `render.yaml` runs the deployed app with `USE_RERANKER=false` and `ONNX_THREADS=1`. Both models
+  together exceed the free instance's 512 MB, and Render then restarts the app every minute or two
+  (intermittent 502s). Locally the re-ranker stays on.
 
 ## 8. Configuration
 
@@ -237,4 +239,4 @@ render.yaml                Render blueprint
 | Model download fails | Check your internet connection or proxy; the models come from huggingface.co |
 | Groq `404 model ... does not exist` or `model_decommissioned` | The model was retired. Check <https://console.groq.com/docs/deprecations> and set `LLM_MODEL` / `JUDGE_MODEL` in `.env` to current models |
 | HTTP 429 from Groq | Wait a minute; the client retries automatically. Use `--sleep` for evaluations |
-| Render out of memory | Set `USE_RERANKER=false` |
+| Render: app works on and off, 502s, log shows "Instance ... restarted" with no error | Out of memory. Make sure `USE_RERANKER=false`, `ONNX_THREADS=1` and `OMP_NUM_THREADS=1` are set in Render > Environment |

@@ -16,10 +16,12 @@ from langchain_core.embeddings import Embeddings
 class FastEmbedEmbeddings(Embeddings):
     """LangChain-compatible embeddings backed by fastembed.TextEmbedding."""
 
-    def __init__(self, model_name: str, cache_dir: Path | str | None = None, batch_size: int = 64):
+    def __init__(self, model_name: str, cache_dir: Path | str | None = None, batch_size: int = 64,
+                 threads: int | None = None):
         self.model_name = model_name
         self.cache_dir = str(cache_dir) if cache_dir else None
         self.batch_size = batch_size
+        self.threads = threads or None
         self._model = None
         self._lock = Lock()
 
@@ -30,10 +32,12 @@ class FastEmbedEmbeddings(Embeddings):
                 if self._model is None:
                     from fastembed import TextEmbedding  # imported lazily: heavy
 
-                    self._model = TextEmbedding(model_name=self.model_name, cache_dir=self.cache_dir)
+                    self._model = TextEmbedding(model_name=self.model_name, cache_dir=self.cache_dir,
+                                                threads=self.threads)
         return self._model
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        # Small batches keep peak memory low while indexing.
         return [vec.tolist() for vec in self.model.embed(texts, batch_size=self.batch_size)]
 
     def embed_query(self, text: str) -> list[float]:
@@ -41,4 +45,5 @@ class FastEmbedEmbeddings(Embeddings):
 
 
 def get_embeddings(settings) -> Embeddings:
-    return FastEmbedEmbeddings(settings.embed_model, cache_dir=settings.model_cache_dir)
+    return FastEmbedEmbeddings(settings.embed_model, cache_dir=settings.model_cache_dir,
+                               batch_size=16, threads=settings.onnx_threads)

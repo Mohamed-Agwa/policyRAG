@@ -80,11 +80,14 @@ async function ask(question) {
   send.disabled = true; input.disabled = true;
   const typing = el("div", "msg bot typing", "Searching the policies…");
   chat.appendChild(typing);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 120000);
   try {
     const res = await fetch("/chat", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({question}),
+      signal: controller.signal,
     });
     const data = await res.json();
     typing.remove();
@@ -92,8 +95,11 @@ async function ask(question) {
     else addBot(data);
   } catch (e) {
     typing.remove();
-    addError("Could not reach the server. If the app was idle, it may be waking up; try again in a minute.");
+    addError(e.name === "AbortError"
+      ? "The server took too long to answer (over 2 minutes). Please try again."
+      : "Could not reach the server. If the app was idle, it may be waking up; try again in a minute.");
   } finally {
+    clearTimeout(timer);
     send.disabled = false; input.disabled = false; input.focus();
   }
 }
