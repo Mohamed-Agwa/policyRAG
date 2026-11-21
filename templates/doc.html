@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ doc.doc_id }} · {{ doc.title }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="doc-page">
+  <nav class="doc-nav">
+    <a href="/">&larr; Back to the assistant</a>
+    <span>{{ doc.doc_id }} · source file: <a href="/docs/{{ doc.doc_id }}/raw">{{ doc.path.name }}</a> ({{ doc.kind|upper }})</span>
+  </nav>
+  <article class="doc-body">
+    {{ body|safe }}
+  </article>
+  <script>
+    // Highlight the section a citation link points to.
+    if (location.hash) {
+      const el = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+      if (el) { el.classList.add("target"); el.scrollIntoView({block: "start"}); }
+    }
+  </script>
+</body>
+</html>

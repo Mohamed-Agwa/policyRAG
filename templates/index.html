@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ company }} · Policy Assistant</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Policy Assistant</h1>
+      <p class="sub">{{ company }} · answers come only from company policy documents</p>
+    </div>
+    <a class="docs-link" href="#" id="docs-toggle">Browse policies</a>
+  </header>
+
+  <div class="disclosure" role="note">
+    You are chatting with an <strong>AI assistant</strong>. It answers only from Nile Byte's policy documents
+    and cites its sources. Check the linked policy before acting on important decisions.
+  </div>
+
+  <aside id="docs-panel" class="docs-panel" hidden></aside>
+
+  <main id="chat" class="chat" aria-live="polite">
+    <div class="msg bot">
+      <div class="bubble">
+        Hi! Ask me about Nile Byte's policies: leave, holidays, remote work, expenses, security, privacy, benefits and more.
+      </div>
+      <div class="examples">
+        <button class="example">How many annual leave days can I carry over?</button>
+        <button class="example">What is the hotel limit for a trip to London?</button>
+        <button class="example">How many days can I work from abroad?</button>
+        <button class="example">What should I do if I lose my laptop?</button>
+      </div>
+    </div>
+  </main>
+
+  <form id="ask" class="ask" autocomplete="off">
+    <label for="question" class="visually-hidden">Your question</label>
+    <input id="question" name="question" type="text" maxlength="1000"
+           placeholder="Ask a question about company policies…" required>
+    <button type="submit" id="send">Ask</button>
+  </form>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

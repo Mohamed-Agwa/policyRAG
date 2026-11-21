@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Secrets
+.env
+START_HERE.md
+
+# Generated at build/run time
+chroma_db/
+chroma_db_*/
+.models/
+cache/
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/

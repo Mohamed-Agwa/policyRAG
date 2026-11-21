@@ -1,0 +1,3 @@
+-r requirements.txt
+# Only needed to regenerate the PDF policy from corpus_src/ (scripts/build_pdf.py)
+reportlab==5.1.0

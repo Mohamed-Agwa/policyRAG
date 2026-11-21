@@ -1,0 +1,127 @@
+"""Flask web app for the Nile Byte policy assistant.
+
+Endpoints
+---------
+GET  /                 chat interface
+POST /chat             {"question": "..."} -> answer + citations + snippets (JSON)
+GET  /health           service status (JSON)
+GET  /docs/<doc_id>    rendered source policy (citation links point here)
+GET  /docs/<doc_id>/raw  original file (md / html / pdf)
+
+Importing this module is cheap: models and the index load lazily on the first
+/chat request, so `python -c "import app"` works in CI without an API key.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import threading
+import time
+from threading import Lock
+
+import markdown as md
+from flask import Flask, abort, jsonify, render_template, request, send_file
+
+from rag.config import get_settings
+from rag.guardrails import InvalidQuestion
+from rag.ingest import load_documents_cached
+from rag.pipeline import IndexNotReady, LLMNotConfigured, PolicyRAG, index_size
+
+log = logging.getLogger("policy_rag")
+APP_VERSION = "1.0.0"
+
+
+def create_app(pipeline: PolicyRAG | None = None, settings=None) -> Flask:
+    app = Flask(__name__)
+    app.config["JSON_SORT_KEYS"] = False
+    settings = settings or (pipeline.settings if pipeline else get_settings())
+    state = {"pipeline": pipeline}
+    lock = Lock()
+
+    def get_pipeline() -> PolicyRAG:
+        if state["pipeline"] is None:
+            with lock:
+                if state["pipeline"] is None:
+                    state["pipeline"] = PolicyRAG.from_settings(settings)
+        return state["pipeline"]
+
+    def warm_up() -> None:
+        """Load the index and models in the background so the first user
+        request is fast (useful on Render after a cold start)."""
+        try:
+            p = get_pipeline()
+            p.retrieve("annual leave carryover")
+            log.info("Warm-up complete")
+        except Exception:  # pragma: no cover
+            log.exception("Warm-up failed")
+
+    if pipeline is None and os.getenv("WARMUP_ON_START", "false").lower() == "true":
+        threading.Thread(target=warm_up, daemon=True).start()
+
+    @app.get("/")
+    def index():
+        return render_template("index.html", company="Nile Byte Technologies")
+
+    @app.post("/chat")
+    def chat():
+        t0 = time.perf_counter()
+        payload = request.get_json(silent=True) or {}
+        question = payload.get("question")
+        use_cache = not bool(payload.get("no_cache", False))
+        try:
+            result = get_pipeline().answer(question, use_cache=use_cache)
+        except InvalidQuestion as exc:
+            return jsonify(error=str(exc)), 400
+        except (IndexNotReady, LLMNotConfigured) as exc:
+            return jsonify(error=str(exc)), 503
+        except Exception:  # pragma: no cover - surfaced to the client as a 502
+            log.exception("chat failed")
+            return jsonify(error="The language model request failed. Please try again shortly."), 502
+        result.pop("context", None)
+        result["latency_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+        return jsonify(result)
+
+    @app.get("/health")
+    def health():
+        chunks = index_size(settings)
+        ok = bool(chunks) and settings.llm_configured
+        return jsonify(
+            status="ok" if ok else "degraded",
+            version=APP_VERSION,
+            index_chunks=chunks,
+            llm_configured=settings.llm_configured,
+            model=settings.llm_model,
+            embedding_model=settings.embed_model,
+            reranker=settings.rerank_model if settings.use_reranker else None,
+            top_k=settings.top_k,
+        ), 200
+
+    @app.get("/docs/<doc_id>")
+    def show_doc(doc_id: str):
+        doc = load_documents_cached(str(settings.data_dir)).get(doc_id)
+        if doc is None:
+            abort(404)
+        html = md.markdown(doc.markdown, extensions=["tables", "toc"])
+        return render_template("doc.html", doc=doc, body=html)
+
+    @app.get("/docs/<doc_id>/raw")
+    def raw_doc(doc_id: str):
+        doc = load_documents_cached(str(settings.data_dir)).get(doc_id)
+        if doc is None:
+            abort(404)
+        return send_file(doc.path)
+
+    @app.get("/api/docs")
+    def list_docs():
+        docs = load_documents_cached(str(settings.data_dir)).values()
+        return jsonify([{"doc_id": d.doc_id, "title": d.title, "format": d.kind,
+                         "url": f"/docs/{d.doc_id}"} for d in docs])
+
+    return app
+
+
+app = create_app()
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=5000, debug=False)
