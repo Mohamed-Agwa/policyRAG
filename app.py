@@ -54,32 +54,54 @@ def create_app(pipeline: PolicyRAG | None = None, settings=None) -> Flask:
     app = Flask(__name__)
     app.config["JSON_SORT_KEYS"] = False
     settings = settings or (pipeline.settings if pipeline else get_settings())
-    state = {"pipeline": pipeline, "warmup": "not started" if pipeline is None else "n/a"}
-    lock = Lock()
+    # Per-process state. Gunicorn may import this module in its master process
+    # and then fork the worker, so nothing heavy (threads, locks held, models)
+    # may be created at import time. Everything below is (re)initialised lazily
+    # in whichever process actually serves requests, keyed by its PID.
+    state = {"pid": None, "pipeline": pipeline, "warmup": "n/a" if pipeline else "not started",
+             "lock": None, "warm_started": False}
+    warmup_enabled = pipeline is None and os.getenv("WARMUP_ON_START", "false").lower() == "true"
+
+    def _ensure_process_state() -> None:
+        pid = os.getpid()
+        if state["pid"] != pid:  # first use in this process (or after a fork)
+            state["pid"] = pid
+            state["lock"] = Lock()
+            state["warm_started"] = False
+            if pipeline is None:
+                state["pipeline"] = None
+                state["warmup"] = "not started"
 
     def get_pipeline() -> PolicyRAG:
+        _ensure_process_state()
         if state["pipeline"] is None:
-            with lock:
+            with state["lock"]:
                 if state["pipeline"] is None:
                     state["pipeline"] = PolicyRAG.from_settings(settings)
         return state["pipeline"]
 
     def warm_up() -> None:
-        """Load the index and models in the background so the first user
-        request is fast (useful on Render after a cold start)."""
+        """Load the index and model in the background so the first user
+        question is fast (useful on Render after a cold start)."""
         state["warmup"] = "loading"
-        log.info("Warm-up: loading index and models")
+        log.info("Warm-up (pid %s): loading index and models", os.getpid())
         try:
             p = get_pipeline()
             p.retrieve("annual leave carryover")
             state["warmup"] = "done"
-            log.info("Warm-up complete")
+            log.info("Warm-up complete (pid %s)", os.getpid())
         except Exception as exc:  # pragma: no cover
             state["warmup"] = f"failed: {exc}"
             log.exception("Warm-up failed")
 
-    if pipeline is None and os.getenv("WARMUP_ON_START", "false").lower() == "true":
-        threading.Thread(target=warm_up, daemon=True).start()
+    @app.before_request
+    def start_warm_up_in_this_process():
+        # Runs inside the worker on its first request (Render's health check
+        # arrives within seconds of boot), never in the gunicorn master.
+        _ensure_process_state()
+        if warmup_enabled and not state["warm_started"]:
+            state["warm_started"] = True
+            threading.Thread(target=warm_up, daemon=True).start()
 
     @app.get("/")
     def index():
@@ -111,12 +133,14 @@ def create_app(pipeline: PolicyRAG | None = None, settings=None) -> Flask:
     def health():
         p = state["pipeline"]
         chunks = p.vectorstore._collection.count() if p is not None else index_size(settings)
+        pid = os.getpid()
         ok = bool(chunks) and settings.llm_configured
         return jsonify(
             status="ok" if ok else "degraded",
             version=APP_VERSION,
             pipeline_loaded=p is not None,
             warmup=state["warmup"],
+            pid=pid,
             index_chunks=chunks,
             llm_configured=settings.llm_configured,
             model=settings.llm_model,
