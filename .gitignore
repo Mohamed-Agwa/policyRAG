@@ -8,6 +8,7 @@ venv/
 # Secrets
 .env
 START_HERE.md
+docs/
 
 # Generated at build/run time
 chroma_db/

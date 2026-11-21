@@ -30,9 +30,6 @@ jobs:
         run: pytest -q
 
   deploy:
-    # Optional: deploy to Render only after tests pass on main.
-    # Add a repository secret RENDER_DEPLOY_HOOK_URL (Render > your service >
-    # Settings > Deploy Hook) and set Auto-Deploy to "Off" in Render.
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
